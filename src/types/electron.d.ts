@@ -1,3 +1,10 @@
+export interface TranscriptSegment {
+  id: string
+  source: "them" | "you"
+  text: string
+  timestamp: number
+}
+
 export interface ElectronAPI {
   // Original methods
   openSubscriptionPortal: (authData: {
@@ -34,6 +41,55 @@ export interface ElectronAPI {
   toggleMainWindow: () => Promise<{ success: boolean; error?: string }>
   triggerScreenshot: () => Promise<{ success: boolean; error?: string }>
   triggerProcessScreenshots: () => Promise<{ success: boolean; error?: string }>
+  updateVoiceTranscript: (transcript: string) => Promise<{ success: boolean; error?: string }>
+
+  // Live assistant
+  sendAudioFrame: (pcm: string, source: "them" | "you") => void
+  supportsLiveTranscription: () => Promise<{ supported: boolean }>
+  stopLiveTranscription: () => Promise<{ success: boolean }>
+  onInterimTranscript: (
+    callback: (data: { source: "them" | "you"; text: string }) => void
+  ) => () => void
+  transcribeChunk: (
+    base64: string,
+    mimeType: string,
+    source: "them" | "you"
+  ) => Promise<{ success: boolean; text?: string; error?: string }>
+  getTranscript: () => Promise<TranscriptSegment[]>
+  clearTranscript: () => Promise<{ success: boolean }>
+  askAssistant: (
+    question: string,
+    includeScreen?: boolean
+  ) => Promise<{ success: boolean; error?: string }>
+  answerLatest: (
+    includeScreen?: boolean
+  ) => Promise<{ success: boolean; error?: string }>
+  stopAssistant: () => Promise<{ success: boolean }>
+  setClickThrough: (
+    enabled: boolean
+  ) => Promise<{ success: boolean; enabled: boolean }>
+  toggleClickThrough: () => Promise<{ success: boolean; enabled: boolean }>
+  writeClipboard: (text: string) => Promise<{ success: boolean; error?: string }>
+  recenterWindow: () => Promise<{ success: boolean }>
+  focusWindow: () => Promise<{ success: boolean }>
+  blurWindow: () => Promise<{ success: boolean }>
+  onProcessingStatus: (
+    callback: (data: { message: string; progress: number }) => void
+  ) => () => void
+  onSolutionChunk: (callback: (delta: string) => void) => () => void
+  onTranscriptUpdate: (
+    callback: (segments: TranscriptSegment[]) => void
+  ) => () => void
+  onAssistantStreamStart: (
+    callback: (data: { question: string; isAuto: boolean }) => void
+  ) => () => void
+  onAssistantStreamChunk: (callback: (delta: string) => void) => () => void
+  onAssistantStreamDone: (
+    callback: (data: { answer?: string; aborted?: boolean }) => void
+  ) => () => void
+  onAssistantStreamError: (callback: (error: string) => void) => () => void
+  onFocusAsk: (callback: () => void) => () => void
+  onClickThroughChanged: (callback: (enabled: boolean) => void) => () => void
   triggerReset: () => Promise<{ success: boolean; error?: string }>
   triggerMoveLeft: () => Promise<{ success: boolean; error?: string }>
   triggerMoveRight: () => Promise<{ success: boolean; error?: string }>
@@ -54,8 +110,26 @@ export interface ElectronAPI {
   getPlatform: () => string
   
   // New methods for OpenAI integration
-  getConfig: () => Promise<{ apiKey: string; model: string }>
-  updateConfig: (config: { apiKey?: string; model?: string }) => Promise<boolean>
+  getConfig: () => Promise<{
+    apiKey: string
+    apiProvider?: "openai" | "gemini" | "anthropic"
+    extractionModel?: string
+    solutionModel?: string
+    debuggingModel?: string
+    language?: string
+    opacity?: number
+  }>
+  // Previously declared only { apiKey, model }, while the settings dialog
+  // saves provider and three separate model fields through it.
+  updateConfig: (config: {
+    apiKey?: string
+    apiProvider?: "openai" | "gemini" | "anthropic"
+    extractionModel?: string
+    solutionModel?: string
+    debuggingModel?: string
+    language?: string
+    opacity?: number
+  }) => Promise<boolean>
   checkApiKey: () => Promise<boolean>
   validateApiKey: (apiKey: string) => Promise<{ valid: boolean; error?: string }>
   openLink: (url: string) => void

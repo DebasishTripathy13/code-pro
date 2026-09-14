@@ -2,6 +2,24 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Never let the mouse cursor change shape over the overlay.
+ *
+ * The window itself is excluded from screen capture, but the cursor is drawn
+ * by the OS compositor and IS captured. So the pointer turning into an I-beam
+ * over a text field, or a hand over a button, tells everyone on the call that
+ * there is something invisible under the mouse - which gives the whole thing
+ * away far more clearly than the window ever would.
+ *
+ * Everything is forced to the plain arrow. Text can still be selected and
+ * buttons still click; only the shape is suppressed.
+ */
+*,
+*::before,
+*::after {
+  cursor: default !important;
+}
+
 /* Custom animations for UI elements */
 @keyframes fadeIn {
   from { opacity: 0; transform: translate(-50%, -48%); }

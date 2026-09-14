@@ -258,6 +258,31 @@ export class ScreenshotHelper {
     }
   }
 
+  /**
+   * Grabs the current screen as base64 without touching either queue.
+   * Used by the live assistant so an answer can take what's on screen into
+   * account without polluting the screenshot queue the user manages by hand.
+   */
+  public async captureScreenBase64(
+    hideMainWindow: () => void,
+    showMainWindow: () => void
+  ): Promise<string | null> {
+    hideMainWindow()
+    const hideDelay = process.platform === "win32" ? 400 : 250
+    await new Promise((resolve) => setTimeout(resolve, hideDelay))
+
+    try {
+      const buffer = await this.captureScreenshot()
+      if (!buffer || buffer.length === 0) return null
+      return buffer.toString("base64")
+    } catch (error) {
+      console.warn("Silent screen capture failed:", error)
+      return null
+    } finally {
+      showMainWindow()
+    }
+  }
+
   public async takeScreenshot(
     hideMainWindow: () => void,
     showMainWindow: () => void

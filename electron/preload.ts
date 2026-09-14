@@ -151,6 +151,88 @@ const electronAPI = {
   triggerScreenshot: () => ipcRenderer.invoke("trigger-screenshot"),
   triggerProcessScreenshots: () =>
     ipcRenderer.invoke("trigger-process-screenshots"),
+  updateVoiceTranscript: (transcript: string) =>
+    ipcRenderer.invoke("update-voice-transcript", transcript),
+
+  // ---- Live assistant (real-time transcription + streaming answers) ----
+  // Fire-and-forget: audio frames stream in several times a second.
+  sendAudioFrame: (pcm: string, source: "them" | "you") =>
+    ipcRenderer.send("assistant:audio-frame", { pcm, source }),
+  supportsLiveTranscription: () => ipcRenderer.invoke("assistant:supports-live"),
+  stopLiveTranscription: () => ipcRenderer.invoke("assistant:stop-live"),
+  transcribeChunk: (base64: string, mimeType: string, source: "them" | "you") =>
+    ipcRenderer.invoke("assistant:transcribe-chunk", { base64, mimeType, source }),
+  onInterimTranscript: (
+    callback: (data: { source: "them" | "you"; text: string }) => void
+  ) => {
+    const subscription = (_: any, data: { source: "them" | "you"; text: string }) =>
+      callback(data)
+    ipcRenderer.on("assistant:interim", subscription)
+    return () => ipcRenderer.removeListener("assistant:interim", subscription)
+  },
+  getTranscript: () => ipcRenderer.invoke("assistant:get-transcript"),
+  clearTranscript: () => ipcRenderer.invoke("assistant:clear-transcript"),
+  askAssistant: (question: string, includeScreen?: boolean) =>
+    ipcRenderer.invoke("assistant:ask", { question, includeScreen }),
+  answerLatest: (includeScreen?: boolean) =>
+    ipcRenderer.invoke("assistant:answer-latest", { includeScreen }),
+  stopAssistant: () => ipcRenderer.invoke("assistant:stop"),
+  setClickThrough: (enabled: boolean) =>
+    ipcRenderer.invoke("set-click-through", enabled),
+  toggleClickThrough: () => ipcRenderer.invoke("toggle-click-through"),
+  writeClipboard: (text: string) => ipcRenderer.invoke("write-clipboard", text),
+  recenterWindow: () => ipcRenderer.invoke("recenter-window"),
+  focusWindow: () => ipcRenderer.invoke("focus-window"),
+  blurWindow: () => ipcRenderer.invoke("blur-window"),
+  onProcessingStatus: (callback: (data: { message: string; progress: number }) => void) => {
+    const subscription = (_: any, data: { message: string; progress: number }) => callback(data)
+    ipcRenderer.on("processing-status", subscription)
+    return () => ipcRenderer.removeListener("processing-status", subscription)
+  },
+  onSolutionChunk: (callback: (delta: string) => void) => {
+    const subscription = (_: any, delta: string) => callback(delta)
+    ipcRenderer.on("solution-chunk", subscription)
+    return () => ipcRenderer.removeListener("solution-chunk", subscription)
+  },
+
+  onTranscriptUpdate: (callback: (segments: any[]) => void) => {
+    const subscription = (_: any, segments: any[]) => callback(segments)
+    ipcRenderer.on("assistant:transcript-update", subscription)
+    return () => ipcRenderer.removeListener("assistant:transcript-update", subscription)
+  },
+  onAssistantStreamStart: (
+    callback: (data: { question: string; isAuto: boolean }) => void
+  ) => {
+    const subscription = (_: any, data: { question: string; isAuto: boolean }) =>
+      callback(data)
+    ipcRenderer.on("assistant:stream-start", subscription)
+    return () => ipcRenderer.removeListener("assistant:stream-start", subscription)
+  },
+  onAssistantStreamChunk: (callback: (delta: string) => void) => {
+    const subscription = (_: any, delta: string) => callback(delta)
+    ipcRenderer.on("assistant:stream-chunk", subscription)
+    return () => ipcRenderer.removeListener("assistant:stream-chunk", subscription)
+  },
+  onAssistantStreamDone: (callback: (data: any) => void) => {
+    const subscription = (_: any, data: any) => callback(data)
+    ipcRenderer.on("assistant:stream-done", subscription)
+    return () => ipcRenderer.removeListener("assistant:stream-done", subscription)
+  },
+  onAssistantStreamError: (callback: (error: string) => void) => {
+    const subscription = (_: any, error: string) => callback(error)
+    ipcRenderer.on("assistant:stream-error", subscription)
+    return () => ipcRenderer.removeListener("assistant:stream-error", subscription)
+  },
+  onFocusAsk: (callback: () => void) => {
+    const subscription = () => callback()
+    ipcRenderer.on("assistant:focus-ask", subscription)
+    return () => ipcRenderer.removeListener("assistant:focus-ask", subscription)
+  },
+  onClickThroughChanged: (callback: (enabled: boolean) => void) => {
+    const subscription = (_: any, enabled: boolean) => callback(enabled)
+    ipcRenderer.on("click-through-changed", subscription)
+    return () => ipcRenderer.removeListener("click-through-changed", subscription)
+  },
   triggerReset: () => ipcRenderer.invoke("trigger-reset"),
   triggerMoveLeft: () => ipcRenderer.invoke("trigger-move-left"),
   triggerMoveRight: () => ipcRenderer.invoke("trigger-move-right"),

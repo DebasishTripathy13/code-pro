@@ -17,7 +17,7 @@ export default defineConfig({
             sourcemap: true,
             minify: false,
             rollupOptions: {
-              external: ["electron"]
+              external: ["electron", "ws"]
             }
           }
         }
@@ -30,7 +30,7 @@ export default defineConfig({
             outDir: "dist-electron",
             sourcemap: true,
             rollupOptions: {
-              external: ["electron"]
+              external: ["electron", "ws"]
             }
           }
         }

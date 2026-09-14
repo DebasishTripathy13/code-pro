@@ -11,16 +11,22 @@ export function initAutoUpdater() {
     return
   }
 
-  if (!process.env.GH_TOKEN) {
-    console.error("GH_TOKEN environment variable is not set")
-    return
-  }
+  // NOTE: there is deliberately no GH_TOKEN check here.
+  //
+  // This used to return early unless GH_TOKEN was set, which meant auto-update
+  // never ran for anybody who installed the app - end users have no reason to
+  // have that variable. GH_TOKEN is needed by electron-builder when *publishing*
+  // a release, not by electron-updater when *checking* for one against a public
+  // repository. The feed comes from build.publish in package.json.
 
   // Configure auto updater
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
-  autoUpdater.allowDowngrade = true
-  autoUpdater.allowPrerelease = true
+  // Downgrades and prereleases stay off: with autoDownload enabled, allowing
+  // them means an accidental prerelease tag, or an older release published
+  // after a newer one, gets installed over a working version automatically.
+  autoUpdater.allowDowngrade = false
+  autoUpdater.allowPrerelease = false
 
   // Enable more verbose logging
   autoUpdater.logger = log

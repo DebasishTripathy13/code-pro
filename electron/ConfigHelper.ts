@@ -20,9 +20,9 @@ export class ConfigHelper extends EventEmitter {
   private defaultConfig: Config = {
     apiKey: "",
     apiProvider: "gemini", // Default to Gemini
-    extractionModel: "gemini-2.0-flash", // Default to Flash for faster responses
-    solutionModel: "gemini-2.0-flash",
-    debuggingModel: "gemini-2.0-flash",
+    extractionModel: "gemini-3.7-flash", // Current-generation Flash: fast and capable
+    solutionModel: "gemini-3.7-flash",
+    debuggingModel: "gemini-3.7-flash",
     language: "python",
     opacity: 1.0
   };
@@ -56,36 +56,43 @@ export class ConfigHelper extends EventEmitter {
   }
 
   /**
-   * Validate and sanitize model selection to ensure only allowed models are used
+   * Models that providers have retired, mapped to their current equivalent.
+   * Without this an existing config keeps pointing at a dead model and every
+   * request fails with a 404.
+   */
+  private static readonly RETIRED_MODELS: Record<string, string> = {
+    "gemini-2.0-flash": "gemini-3.7-flash",
+    "gemini-1.5-flash": "gemini-3.7-flash",
+    "gemini-pro": "gemini-3.7-flash",
+    // Verified against the live API: both now answer "no longer available to
+    // new users". 1.5-pro previously mapped to 2.5-pro, which would have
+    // migrated one dead model onto another.
+    "gemini-2.5-pro": "gemini-3.1-pro-preview",
+    "gemini-1.5-pro": "gemini-3.1-pro-preview",
+    "gemini-2.5-flash-lite": "gemini-3.5-flash-lite"
+  };
+
+  /**
+   * Migrate retired models to a working equivalent. Unrecognised models are
+   * passed through untouched - a provider shipping a newer model must never
+   * be silently downgraded to an older (or dead) one.
    */
   private sanitizeModelSelection(model: string, provider: "openai" | "gemini" | "anthropic"): string {
-    if (provider === "openai") {
-      // Only allow gpt-4o and gpt-4o-mini for OpenAI
-      const allowedModels = ['gpt-4o', 'gpt-4o-mini'];
-      if (!allowedModels.includes(model)) {
-        console.warn(`Invalid OpenAI model specified: ${model}. Using default model: gpt-4o`);
-        return 'gpt-4o';
-      }
-      return model;
-    } else if (provider === "gemini")  {
-      // Only allow gemini-1.5-pro and gemini-2.0-flash for Gemini
-      const allowedModels = ['gemini-1.5-pro', 'gemini-2.0-flash'];
-      if (!allowedModels.includes(model)) {
-        console.warn(`Invalid Gemini model specified: ${model}. Using default model: gemini-2.0-flash`);
-        return 'gemini-2.0-flash'; // Changed default to flash
-      }
-      return model;
-    }  else if (provider === "anthropic") {
-      // Only allow Claude models
-      const allowedModels = ['claude-3-7-sonnet-20250219', 'claude-3-5-sonnet-20241022', 'claude-3-opus-20240229'];
-      if (!allowedModels.includes(model)) {
-        console.warn(`Invalid Anthropic model specified: ${model}. Using default model: claude-3-7-sonnet-20250219`);
-        return 'claude-3-7-sonnet-20250219';
-      }
-      return model;
+    if (!model) return this.defaultModelFor(provider);
+
+    const replacement = ConfigHelper.RETIRED_MODELS[model];
+    if (replacement) {
+      console.warn(`Model ${model} has been retired; using ${replacement} instead.`);
+      return replacement;
     }
-    // Default fallback
+
     return model;
+  }
+
+  private defaultModelFor(provider: "openai" | "gemini" | "anthropic"): string {
+    if (provider === "openai") return "gpt-4o";
+    if (provider === "anthropic") return "claude-3-7-sonnet-20250219";
+    return "gemini-3.5-flash";
   }
 
   public loadConfig(): Config {
@@ -99,7 +106,9 @@ export class ConfigHelper extends EventEmitter {
           config.apiProvider = "gemini"; // Default to Gemini if invalid
         }
         
-        // Sanitize model selections to ensure only allowed models are used
+        // Migrate any retired models to a working equivalent, and persist the
+        // result so the migration happens once rather than on every read.
+        const before = [config.extractionModel, config.solutionModel, config.debuggingModel].join("|");
         if (config.extractionModel) {
           config.extractionModel = this.sanitizeModelSelection(config.extractionModel, config.apiProvider);
         }
@@ -109,11 +118,18 @@ export class ConfigHelper extends EventEmitter {
         if (config.debuggingModel) {
           config.debuggingModel = this.sanitizeModelSelection(config.debuggingModel, config.apiProvider);
         }
-        
-        return {
-          ...this.defaultConfig,
-          ...config
-        };
+        const after = [config.extractionModel, config.solutionModel, config.debuggingModel].join("|");
+
+        const merged = { ...this.defaultConfig, ...config };
+        if (before !== after) {
+          try {
+            fs.writeFileSync(this.configPath, JSON.stringify(merged, null, 2));
+          } catch (writeErr) {
+            console.warn("Could not persist migrated model config:", writeErr);
+          }
+        }
+
+        return merged;
       }
       
       // If no config exists, create a default one
@@ -179,9 +195,9 @@ export class ConfigHelper extends EventEmitter {
           updates.solutionModel = "claude-3-7-sonnet-20250219";
           updates.debuggingModel = "claude-3-7-sonnet-20250219";
         } else {
-          updates.extractionModel = "gemini-2.0-flash";
-          updates.solutionModel = "gemini-2.0-flash";
-          updates.debuggingModel = "gemini-2.0-flash";
+          updates.extractionModel = "gemini-3.5-flash";
+          updates.solutionModel = "gemini-3.5-flash";
+          updates.debuggingModel = "gemini-3.5-flash";
         }
       }
       

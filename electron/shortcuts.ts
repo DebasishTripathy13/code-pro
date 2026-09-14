@@ -4,6 +4,7 @@ import { configHelper } from "./ConfigHelper"
 
 export class ShortcutsHelper {
   private deps: IShortcutsHelperDeps
+  private failedShortcuts: string[] = []
 
   constructor(deps: IShortcutsHelperDeps) {
     this.deps = deps
@@ -34,8 +35,45 @@ export class ShortcutsHelper {
     }
   }
 
+  /**
+   * Registers a global shortcut and reports it when the OS refuses.
+   *
+   * `globalShortcut.register` returns false when another application already
+   * owns the accelerator - most often a second copy of this app still running
+   * in the background. Ignoring that return value is why a stale instance
+   * makes every hotkey appear dead with no explanation anywhere.
+   */
+  private register(accelerator: string, handler: () => void): void {
+    try {
+      const ok = globalShortcut.register(accelerator, handler)
+      if (!ok) {
+        this.failedShortcuts.push(accelerator)
+        console.warn(
+          `Could not register ${accelerator} - another application (often a second copy of this app) already owns it.`
+        )
+      }
+    } catch (error) {
+      this.failedShortcuts.push(accelerator)
+      console.warn(`Error registering ${accelerator}:`, error)
+    }
+  }
+
+  /** Tell the user once, rather than leaving them with silent dead keys. */
+  private reportFailedShortcuts(): void {
+    if (this.failedShortcuts.length === 0) return
+
+    const mainWindow = this.deps.getMainWindow()
+    const list = this.failedShortcuts.join(", ")
+    console.warn(`Shortcuts unavailable: ${list}`)
+
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("shortcuts-unavailable", this.failedShortcuts)
+    }
+  }
+
   public registerGlobalShortcuts(): void {
-    globalShortcut.register("CommandOrControl+H", async () => {
+    this.failedShortcuts = []
+    this.register("CommandOrControl+H", async () => {
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow) {
         console.log("Taking screenshot...")
@@ -52,11 +90,55 @@ export class ShortcutsHelper {
       }
     })
 
-    globalShortcut.register("CommandOrControl+Enter", async () => {
+    this.register("CommandOrControl+Enter", async () => {
       await this.deps.processingHelper?.processScreenshots()
     })
 
-    globalShortcut.register("CommandOrControl+R", () => {
+    // Answer whatever the other person just said - no typing, no screenshot.
+    this.register("CommandOrControl+Shift+Enter", async () => {
+      const assistant = this.deps.getAssistantHelper()
+      if (!assistant) return
+      try {
+        await assistant.answerLatest()
+      } catch (error) {
+        console.error("Error answering latest:", error)
+      }
+    })
+
+    // Same, but also looks at what's currently on screen.
+    this.register("CommandOrControl+Shift+S", async () => {
+      const assistant = this.deps.getAssistantHelper()
+      if (!assistant) return
+      try {
+        const screen = await this.deps.captureScreenBase64()
+        await assistant.answerLatest(screen || undefined)
+      } catch (error) {
+        console.error("Error answering with screen context:", error)
+      }
+    })
+
+    // Open the ask-anything box in the overlay.
+    this.register("CommandOrControl+Shift+Space", () => {
+      const mainWindow = this.deps.getMainWindow()
+      if (!mainWindow) return
+      if (!this.deps.isVisible()) this.deps.toggleMainWindow()
+      // Without this the input receives DOM focus inside a window the OS has
+      // not focused, so keystrokes go to whatever is behind the overlay.
+      this.deps.focusWindow()
+      mainWindow.webContents.send("assistant:focus-ask")
+    })
+
+    // Stop a running answer mid-stream.
+    this.register("CommandOrControl+Shift+X", () => {
+      this.deps.getAssistantHelper()?.stop()
+    })
+
+    // Let clicks fall through the overlay to the app behind it.
+    this.register("CommandOrControl+Shift+C", () => {
+      this.deps.toggleClickThrough()
+    })
+
+    this.register("CommandOrControl+R", () => {
       console.log(
         "Command + R pressed. Canceling requests and resetting queues..."
       )
@@ -72,6 +154,12 @@ export class ShortcutsHelper {
       // Update the view state to 'queue'
       this.deps.setView("queue")
 
+      // Reset is what people press when the overlay has "disappeared", so it
+      // also brings the window back on screen. Moving up repeatedly and then
+      // switching to the shorter queue view could otherwise leave it parked
+      // entirely above the top edge with no way to recover it.
+      this.deps.recenterWindow()
+
       // Notify renderer process to switch view to 'queue'
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow && !mainWindow.isDestroyed()) {
@@ -81,49 +169,49 @@ export class ShortcutsHelper {
     })
 
     // New shortcuts for moving the window
-    globalShortcut.register("CommandOrControl+Left", () => {
+    this.register("CommandOrControl+Left", () => {
       console.log("Command/Ctrl + Left pressed. Moving window left.")
       this.deps.moveWindowLeft()
     })
 
-    globalShortcut.register("CommandOrControl+Right", () => {
+    this.register("CommandOrControl+Right", () => {
       console.log("Command/Ctrl + Right pressed. Moving window right.")
       this.deps.moveWindowRight()
     })
 
-    globalShortcut.register("CommandOrControl+Down", () => {
+    this.register("CommandOrControl+Down", () => {
       console.log("Command/Ctrl + down pressed. Moving window down.")
       this.deps.moveWindowDown()
     })
 
-    globalShortcut.register("CommandOrControl+Up", () => {
+    this.register("CommandOrControl+Up", () => {
       console.log("Command/Ctrl + Up pressed. Moving window Up.")
       this.deps.moveWindowUp()
     })
 
-    globalShortcut.register("CommandOrControl+B", () => {
+    this.register("CommandOrControl+B", () => {
       console.log("Command/Ctrl + B pressed. Toggling window visibility.")
       this.deps.toggleMainWindow()
     })
 
-    globalShortcut.register("CommandOrControl+Q", () => {
+    this.register("CommandOrControl+Q", () => {
       console.log("Command/Ctrl + Q pressed. Quitting application.")
       app.quit()
     })
 
     // Adjust opacity shortcuts
-    globalShortcut.register("CommandOrControl+[", () => {
+    this.register("CommandOrControl+[", () => {
       console.log("Command/Ctrl + [ pressed. Decreasing opacity.")
       this.adjustOpacity(-0.1)
     })
 
-    globalShortcut.register("CommandOrControl+]", () => {
+    this.register("CommandOrControl+]", () => {
       console.log("Command/Ctrl + ] pressed. Increasing opacity.")
       this.adjustOpacity(0.1)
     })
     
     // Zoom controls
-    globalShortcut.register("CommandOrControl+-", () => {
+    this.register("CommandOrControl+-", () => {
       console.log("Command/Ctrl + - pressed. Zooming out.")
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow) {
@@ -132,7 +220,7 @@ export class ShortcutsHelper {
       }
     })
     
-    globalShortcut.register("CommandOrControl+0", () => {
+    this.register("CommandOrControl+0", () => {
       console.log("Command/Ctrl + 0 pressed. Resetting zoom.")
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow) {
@@ -140,7 +228,7 @@ export class ShortcutsHelper {
       }
     })
     
-    globalShortcut.register("CommandOrControl+=", () => {
+    this.register("CommandOrControl+=", () => {
       console.log("Command/Ctrl + = pressed. Zooming in.")
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow) {
@@ -150,7 +238,7 @@ export class ShortcutsHelper {
     })
     
     // Delete last screenshot shortcut
-    globalShortcut.register("CommandOrControl+L", () => {
+    this.register("CommandOrControl+L", () => {
       console.log("Command/Ctrl + L pressed. Deleting last screenshot.")
       const mainWindow = this.deps.getMainWindow()
       if (mainWindow) {
@@ -159,6 +247,8 @@ export class ShortcutsHelper {
       }
     })
     
+    this.reportFailedShortcuts()
+
     // Unregister shortcuts when quitting
     app.on("will-quit", () => {
       globalShortcut.unregisterAll()

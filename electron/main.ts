@@ -1,10 +1,11 @@
-import { app, BrowserWindow, screen, shell, ipcMain } from "electron"
+import { app, BrowserWindow, screen, shell, ipcMain, session, desktopCapturer } from "electron"
 import path from "path"
 import fs from "fs"
 import { initializeIpcHandlers } from "./ipcHandlers"
 import { ProcessingHelper } from "./ProcessingHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
+import { AssistantHelper } from "./AssistantHelper"
 import { initAutoUpdater } from "./autoUpdater"
 import { configHelper } from "./ConfigHelper"
 import * as dotenv from "dotenv"
@@ -29,11 +30,16 @@ const state = {
   screenshotHelper: null as ScreenshotHelper | null,
   shortcutsHelper: null as ShortcutsHelper | null,
   processingHelper: null as ProcessingHelper | null,
+  assistantHelper: null as AssistantHelper | null,
+
+  // Overlay behaviour
+  isClickThrough: false,
 
   // View and state management
   view: "queue" as "queue" | "solutions" | "debug",
   problemInfo: null as any,
   hasDebugged: false,
+  voiceTranscript: "" as string,
 
   // Processing events
   PROCESSING_EVENTS: {
@@ -69,6 +75,8 @@ export interface IProcessingHelperDeps {
   ) => Promise<{ success: boolean; error?: string }>
   setHasDebugged: (value: boolean) => void
   getHasDebugged: () => boolean
+  getVoiceTranscript: () => string
+  setVoiceTranscript: (transcript: string) => void
   PROCESSING_EVENTS: typeof state.PROCESSING_EVENTS
 }
 
@@ -77,6 +85,12 @@ export interface IShortcutsHelperDeps {
   takeScreenshot: () => Promise<string>
   getImagePreview: (filepath: string) => Promise<string>
   processingHelper: ProcessingHelper | null
+  getAssistantHelper: () => AssistantHelper | null
+  captureScreenBase64: () => Promise<string | null>
+  toggleClickThrough: () => boolean
+  recenterWindow: () => void
+  focusWindow: () => void
+  blurWindow: () => void
   clearQueues: () => void
   setView: (view: "queue" | "solutions" | "debug") => void
   isVisible: () => boolean
@@ -103,6 +117,14 @@ export interface IIpcHandlerDeps {
   toggleMainWindow: () => void
   clearQueues: () => void
   setView: (view: "queue" | "solutions" | "debug") => void
+  setVoiceTranscript: (transcript: string) => void
+  getAssistantHelper: () => AssistantHelper | null
+  captureScreenBase64: () => Promise<string | null>
+  setClickThrough: (enabled: boolean) => boolean
+  toggleClickThrough: () => boolean
+  recenterWindow: () => void
+  focusWindow: () => void
+  blurWindow: () => void
   moveWindowLeft: () => void
   moveWindowRight: () => void
   moveWindowUp: () => void
@@ -112,6 +134,7 @@ export interface IIpcHandlerDeps {
 // Initialize helpers
 function initializeHelpers() {
   state.screenshotHelper = new ScreenshotHelper(state.view)
+  state.assistantHelper = new AssistantHelper(getMainWindow)
   state.processingHelper = new ProcessingHelper({
     getScreenshotHelper,
     getMainWindow,
@@ -127,6 +150,8 @@ function initializeHelpers() {
     deleteScreenshot,
     setHasDebugged,
     getHasDebugged,
+    getVoiceTranscript,
+    setVoiceTranscript,
     PROCESSING_EVENTS: state.PROCESSING_EVENTS
   } as IProcessingHelperDeps)
   state.shortcutsHelper = new ShortcutsHelper({
@@ -134,6 +159,12 @@ function initializeHelpers() {
     takeScreenshot,
     getImagePreview,
     processingHelper: state.processingHelper,
+    getAssistantHelper,
+    captureScreenBase64,
+    toggleClickThrough,
+    recenterWindow,
+    focusWindow,
+    blurWindow,
     clearQueues,
     setView,
     isVisible: () => state.isWindowVisible,
@@ -156,18 +187,18 @@ function initializeHelpers() {
 
 // Auth callback handler
 
-// Register the interview-coder protocol
+// Register the code-pro protocol
 if (process.platform === "darwin") {
-  app.setAsDefaultProtocolClient("interview-coder")
+  app.setAsDefaultProtocolClient("code-pro")
 } else {
-  app.setAsDefaultProtocolClient("interview-coder", process.execPath, [
+  app.setAsDefaultProtocolClient("code-pro", process.execPath, [
     path.resolve(process.argv[1] || "")
   ])
 }
 
 // Handle the protocol. In this case, we choose to show an Error Box.
 if (process.defaultApp && process.argv.length >= 2) {
-  app.setAsDefaultProtocolClient("interview-coder", process.execPath, [
+  app.setAsDefaultProtocolClient("code-pro", process.execPath, [
     path.resolve(process.argv[1])
   ])
 }
@@ -224,6 +255,10 @@ async function createWindow(): Promise<void> {
     },
     show: true,
     frame: false,
+    // NOTE: do not set `resizable: false` here. Windows stops enforcing
+    // minWidth/minHeight on a non-resizable window, so the content-driven
+    // setWindowDimensions call shrinks the overlay to the raw measured size
+    // (observed: 333x79 instead of 750x550).
     transparent: true,
     fullscreenable: false,
     hasShadow: false,
@@ -408,7 +443,10 @@ function showMainWindow(): void {
         ...state.windowSize
       });
     }
-    state.mainWindow.setIgnoreMouseEvents(false);
+    // Re-showing the window must not silently cancel click-through mode -
+    // the overlay would start eating clicks again while the UI still reports
+    // click-through as enabled.
+    state.mainWindow.setIgnoreMouseEvents(state.isClickThrough, { forward: true });
     state.mainWindow.setAlwaysOnTop(true, "screen-saver", 1);
     state.mainWindow.setVisibleOnAllWorkspaces(true, {
       visibleOnFullScreen: true
@@ -444,33 +482,51 @@ function moveWindowHorizontal(updateFn: (x: number) => number): void {
 function moveWindowVertical(updateFn: (y: number) => number): void {
   if (!state.mainWindow) return
 
-  const newY = updateFn(state.currentY)
-  // Allow window to go 2/3 off screen in either direction
-  const maxUpLimit = (-(state.windowSize?.height || 0) * 2) / 3
-  const maxDownLimit =
-    state.screenHeight + ((state.windowSize?.height || 0) * 2) / 3
+  // Allow the window to sit up to 2/3 off screen in either direction.
+  const height = state.windowSize?.height || 0
+  const maxUpLimit = (-height * 2) / 3
+  const maxDownLimit = state.screenHeight + (height * 2) / 3
 
-  // Log the current state and limits
-  console.log({
-    newY,
-    maxUpLimit,
-    maxDownLimit,
-    screenHeight: state.screenHeight,
-    windowHeight: state.windowSize?.height,
-    currentY: state.currentY
-  })
+  // Clamp rather than reject.
+  //
+  // This used to be `if (newY >= maxUpLimit && newY <= maxDownLimit)`, which
+  // froze the window whenever currentY was already outside the range - and it
+  // gets there on its own, because the limits are derived from the window
+  // height and the window shrinks when the view changes. A window parked at
+  // -430 while the height dropped 1761 -> 550 (limit -366) could move neither
+  // up nor down: both candidates were out of range, so every keypress was
+  // silently discarded and the window was stranded off-screen for good.
+  const newY = Math.min(Math.max(updateFn(state.currentY), maxUpLimit), maxDownLimit)
 
-  // Only update if within bounds
-  if (newY >= maxUpLimit && newY <= maxDownLimit) {
-    state.currentY = newY
-    state.mainWindow.setPosition(
-      Math.round(state.currentX),
-      Math.round(state.currentY)
-    )
-  }
+  if (Math.round(newY) === Math.round(state.currentY)) return
+
+  state.currentY = newY
+  state.mainWindow.setPosition(
+    Math.round(state.currentX),
+    Math.round(state.currentY)
+  )
 }
 
 // Window dimension functions
+/** Keep at least this much of the window on screen so it stays reachable. */
+const MIN_VISIBLE_PX = 120
+
+/** Must match the BrowserWindow minWidth/minHeight. */
+const MIN_WINDOW_WIDTH = 750
+const MIN_WINDOW_HEIGHT = 550
+
+/**
+ * Clamp a position so some of the window always remains on screen. Without
+ * this a window that is moved up and then *shrinks* (the reset view is much
+ * shorter than the solutions view) ends up entirely above the top edge, with
+ * no way to get it back.
+ */
+function clampToScreen(y: number, windowHeight: number): number {
+  const highest = -(Math.max(0, windowHeight - MIN_VISIBLE_PX))
+  const lowest = state.screenHeight - MIN_VISIBLE_PX
+  return Math.min(Math.max(y, highest), lowest)
+}
+
 function setWindowDimensions(width: number, height: number): void {
   if (!state.mainWindow?.isDestroyed()) {
     const [currentX, currentY] = state.mainWindow.getPosition()
@@ -478,13 +534,71 @@ function setWindowDimensions(width: number, height: number): void {
     const workArea = primaryDisplay.workAreaSize
     const maxWidth = Math.floor(workArea.width * 0.5)
 
+    // Bound the window at both ends, rather than relying on the OS to honour
+    // the BrowserWindow min sizes - it stops doing that under some window
+    // flags, and the overlay then collapses to the raw content size.
+    const clampedHeight = Math.min(
+      Math.max(Math.ceil(height), MIN_WINDOW_HEIGHT),
+      workArea.height
+    )
+    const clampedWidth = Math.min(
+      Math.max(width + 32, MIN_WINDOW_WIDTH),
+      maxWidth
+    )
+    const clampedY = clampToScreen(currentY, clampedHeight)
+
+    // Only pull the window left when it would actually hang off the right
+    // edge. Recomputing x from the width on every update made the window
+    // slide left and right by however much the measured width wobbled.
+    const maxX = workArea.width - clampedWidth
+    const nextX = currentX > maxX ? Math.max(0, maxX) : currentX
+
+    // Ignore updates that change nothing meaningful.
+    //
+    // The renderer measures its own content and asks for a resize; resizing
+    // changes the layout, which triggers another measurement. Opening a modal
+    // adds scroll-lock padding and kicks that loop off, so the window
+    // oscillates between two nearly-identical sizes indefinitely. A couple of
+    // pixels of hysteresis stops it dead.
+    const [w, h] = state.mainWindow.getSize()
+    const RESIZE_EPSILON = 4
+    if (
+      Math.abs(w - clampedWidth) <= RESIZE_EPSILON &&
+      Math.abs(h - clampedHeight) <= RESIZE_EPSILON &&
+      nextX === currentX &&
+      clampedY === currentY
+    ) {
+      return
+    }
+
     state.mainWindow.setBounds({
-      x: Math.min(currentX, workArea.width - maxWidth),
-      y: currentY,
-      width: Math.min(width + 32, maxWidth),
-      height: Math.ceil(height)
+      x: nextX,
+      y: clampedY,
+      width: clampedWidth,
+      height: clampedHeight
     })
+    state.currentX = nextX
+    state.currentY = clampedY
   }
+}
+
+/**
+ * Put the window back somewhere visible. This is the escape hatch for a
+ * window that has been moved off-screen - bound to the reset shortcut, which
+ * is what people reach for when the overlay "disappears".
+ */
+function recenterWindow(): void {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return
+
+  const workArea = screen.getPrimaryDisplay().workAreaSize
+  const [width, height] = state.mainWindow.getSize()
+  const x = Math.max(0, Math.floor((workArea.width - width) / 2))
+  const y = 50
+
+  state.currentX = x
+  state.currentY = y
+  state.mainWindow.setPosition(x, y)
+  console.log("Window recentered to", { x, y })
 }
 
 // Environment setup
@@ -503,10 +617,88 @@ function loadEnvVariables() {
 }
 
 // Initialize application
+// Let the renderer capture system (loopback) audio and the microphone with
+// no OS picker dialog and no permission prompt - both would be visible to
+// anyone the user is screen-sharing with, which defeats the point of the
+// invisible overlay. Failures here are non-fatal: audio capture is best
+// effort and the app must keep working screenshot-only if it's unavailable.
+function setupSilentMediaCapture(): void {
+  try {
+    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      desktopCapturer
+        .getSources({ types: ["screen"] })
+        .then((sources) => {
+          if (sources.length === 0) {
+            callback({})
+            return
+          }
+          // 'loopback' captures whatever is playing through the speakers
+          // (e.g. the interviewer's voice over a call) - Windows/macOS only.
+          callback({ video: sources[0], audio: "loopback" })
+        })
+        .catch((err) => {
+          console.error("Silent display-media capture failed:", err)
+          callback({})
+        })
+    })
+
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, callback) => {
+      if (permission === "media") {
+        callback(true)
+        return
+      }
+      callback(false)
+    })
+  } catch (err) {
+    console.error("Failed to set up silent media capture:", err)
+  }
+}
+
+/**
+ * The app used to store its data under "interview-coder-v1". Carry the saved
+ * settings (API key, model choice, language) across to the new folder so a
+ * rename doesn't silently look like a factory reset to existing users.
+ */
+function migrateLegacyUserData(newPath: string): void {
+  try {
+    const legacyPath = path.join(app.getPath('appData'), 'interview-coder-v1')
+    const legacyConfig = path.join(legacyPath, 'config.json')
+    const newConfig = path.join(newPath, 'config.json')
+
+    if (!fs.existsSync(legacyConfig)) return
+
+    // ConfigHelper is a module-level singleton, so by the time this runs it has
+    // already written a default config. Treat a config with no API key as "not
+    // yet set up" and migrate over it - but never clobber real settings.
+    if (fs.existsSync(newConfig)) {
+      try {
+        const existing = JSON.parse(fs.readFileSync(newConfig, 'utf8'))
+        if (existing?.apiKey) return
+      } catch {
+        // Unreadable config - replacing it with the legacy one is an upgrade.
+      }
+    }
+
+    const legacy = JSON.parse(fs.readFileSync(legacyConfig, 'utf8'))
+    if (!legacy?.apiKey) return
+
+    if (!fs.existsSync(newPath)) fs.mkdirSync(newPath, { recursive: true })
+    fs.writeFileSync(newConfig, JSON.stringify(legacy, null, 2))
+    console.log('Migrated settings from the previous app data folder.')
+  } catch (err) {
+    // A failed migration just means the user re-enters their key - never fatal.
+    console.warn('Could not migrate previous settings:', err)
+  }
+}
+
 async function initializeApp() {
   try {
-    // Set custom cache directory to prevent permission issues
-    const appDataPath = path.join(app.getPath('appData'), 'interview-coder-v1')
+    // Derive the data folder from the app's own name. ConfigHelper is a
+    // module-level singleton that resolves userData at import time - before
+    // this runs - so hardcoding a different folder here would split settings
+    // across two locations.
+    const appDataPath = path.join(app.getPath('appData'), app.getName())
+    migrateLegacyUserData(appDataPath)
     const sessionPath = path.join(appDataPath, 'session')
     const tempPath = path.join(appDataPath, 'temp')
     const cachePath = path.join(appDataPath, 'cache')
@@ -524,7 +716,8 @@ async function initializeApp() {
     app.setPath('cache', cachePath)
       
     loadEnvVariables()
-    
+    setupSilentMediaCapture()
+
     // Ensure a configuration file exists
     if (!configHelper.hasApiKey()) {
       console.log("No API key found in configuration. User will need to set up.")
@@ -545,6 +738,14 @@ async function initializeApp() {
       toggleMainWindow,
       clearQueues,
       setView,
+      setVoiceTranscript,
+      getAssistantHelper,
+      captureScreenBase64,
+      setClickThrough,
+      toggleClickThrough,
+      recenterWindow,
+      focusWindow,
+      blurWindow,
       moveWindowLeft: () =>
         moveWindowHorizontal((x) =>
           Math.max(-(state.windowSize?.width || 0) / 2, x - state.step)
@@ -638,6 +839,86 @@ function setProblemInfo(problemInfo: any): void {
   state.problemInfo = problemInfo
 }
 
+function getAssistantHelper(): AssistantHelper | null {
+  return state.assistantHelper
+}
+
+/**
+ * Click-through mode: the overlay stays visible to the user but every mouse
+ * event passes to whatever is behind it, so it can sit on top of a call
+ * window without ever stealing a click.
+ */
+function setClickThrough(enabled: boolean): boolean {
+  state.isClickThrough = enabled
+  if (state.mainWindow && !state.mainWindow.isDestroyed()) {
+    state.mainWindow.setIgnoreMouseEvents(enabled, { forward: true })
+    state.mainWindow.webContents.send("click-through-changed", enabled)
+  }
+  return state.isClickThrough
+}
+
+function toggleClickThrough(): boolean {
+  return setClickThrough(!state.isClickThrough)
+}
+
+/**
+ * Give the overlay real keyboard focus.
+ *
+ * The window is always shown with showInactive() so it never steals focus
+ * from the call or the editor - which is right by default, but it also means
+ * the ask box could never be typed into: focusing the input in the DOM does
+ * nothing when the OS hasn't focused the window. Typing has to ask for focus
+ * explicitly.
+ */
+function focusWindow(): void {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return
+
+  // Click-through makes the window unfocusable, so lift it for as long as
+  // the user is typing; the renderer restores it afterwards.
+  if (state.isClickThrough) setClickThrough(false)
+
+  state.mainWindow.setFocusable(true)
+  state.mainWindow.focus()
+}
+
+/** Hand focus back so keystrokes return to whatever was underneath. */
+function blurWindow(): void {
+  if (!state.mainWindow || state.mainWindow.isDestroyed()) return
+  state.mainWindow.blur()
+}
+
+/** Screen grab for the assistant that never enters the screenshot queue. */
+async function captureScreenBase64(): Promise<string | null> {
+  if (!state.screenshotHelper) return null
+  try {
+    return await state.screenshotHelper.captureScreenBase64(
+      () => hideMainWindow(),
+      () => showMainWindow()
+    )
+  } catch (error) {
+    console.warn("captureScreenBase64 failed:", error)
+    return null
+  }
+}
+
+/**
+ * Spoken context for the coding flow. The live assistant transcript is the
+ * single source of truth; `state.voiceTranscript` remains as a manual override.
+ */
+function getVoiceTranscript(): string {
+  const live = (state.assistantHelper?.getTranscript() || [])
+    .map((s) => `${s.source === "them" ? "Them" : "Me"}: ${s.text}`)
+    .join("\n")
+
+  const combined = [state.voiceTranscript, live].filter(Boolean).join("\n")
+  const MAX = 4000
+  return combined.length > MAX ? combined.slice(combined.length - MAX) : combined
+}
+
+function setVoiceTranscript(transcript: string): void {
+  state.voiceTranscript = transcript
+}
+
 function getScreenshotQueue(): string[] {
   return state.screenshotHelper?.getScreenshotQueue() || []
 }
@@ -649,6 +930,14 @@ function getExtraScreenshotQueue(): string[] {
 function clearQueues(): void {
   state.screenshotHelper?.clearQueues()
   state.problemInfo = null
+  state.voiceTranscript = ""
+
+  // Reset also has to wipe the live assistant. Without this the transcript
+  // and the chat history from the previous question survived, so a "start
+  // fresh" still answered against whatever was said before it.
+  state.assistantHelper?.stop()
+  state.assistantHelper?.clearTranscript()
+
   setView("queue")
 }
 

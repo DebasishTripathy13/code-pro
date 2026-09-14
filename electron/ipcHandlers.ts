@@ -1,6 +1,6 @@
 // ipcHandlers.ts
 
-import { ipcMain, shell, dialog } from "electron"
+import { ipcMain, shell, dialog, clipboard } from "electron"
 import { randomBytes } from "crypto"
 import { IIpcHandlerDeps } from "./main"
 import { configHelper } from "./ConfigHelper"
@@ -101,6 +101,159 @@ export function initializeIpcHandlers(deps: IIpcHandlerDeps): void {
     }
     
     await deps.processingHelper?.processScreenshots()
+  })
+
+  // Voice input handlers
+  ipcMain.handle("update-voice-transcript", (_event, transcript: string) => {
+    deps.setVoiceTranscript(typeof transcript === "string" ? transcript : "")
+    return { success: true }
+  })
+
+  // Background audio capture sends short speech segments here. `source` is
+  // "them" for system/loopback audio (the interviewer) and "you" for the mic.
+  // Best-effort: failures are returned but never surfaced as hard errors,
+  // since capture runs silently and must not disturb the user.
+  ipcMain.handle(
+    "assistant:transcribe-chunk",
+    async (
+      _event,
+      data: { base64: string; mimeType: string; source: "them" | "you" }
+    ) => {
+      try {
+        if (!data?.base64) return { success: false, error: "No audio data" };
+        const assistant = deps.getAssistantHelper();
+        if (!assistant) return { success: false, error: "Assistant not ready" };
+        return await assistant.transcribeChunk(
+          data.base64,
+          data.mimeType || "audio/wav",
+          data.source === "you" ? "you" : "them"
+        );
+      } catch (error) {
+        console.error("Error handling assistant:transcribe-chunk:", error);
+        return { success: false, error: "Failed to transcribe audio" };
+      }
+    }
+  )
+
+  // Streaming path: raw PCM frames go straight into the live transcription
+  // socket. Uses `on` rather than `handle` because frames arrive ~4x/second
+  // per source and none of them need a reply.
+  ipcMain.on(
+    "assistant:audio-frame",
+    (_event, data: { pcm: string; source: "them" | "you" }) => {
+      if (!data?.pcm) return
+      deps.getAssistantHelper()?.pushAudioFrame(
+        data.source === "you" ? "you" : "them",
+        data.pcm
+      )
+    }
+  )
+
+  ipcMain.handle("assistant:supports-live", () => {
+    return { supported: deps.getAssistantHelper()?.supportsLiveStreaming() ?? false }
+  })
+
+  ipcMain.handle("assistant:stop-live", () => {
+    deps.getAssistantHelper()?.stopLiveCapture()
+    return { success: true }
+  })
+
+  ipcMain.handle("assistant:get-transcript", () => {
+    return deps.getAssistantHelper()?.getTranscript() || []
+  })
+
+  ipcMain.handle("assistant:clear-transcript", () => {
+    deps.getAssistantHelper()?.clearTranscript()
+    return { success: true }
+  })
+
+  ipcMain.handle("assistant:stop", () => {
+    deps.getAssistantHelper()?.stop()
+    return { success: true }
+  })
+
+  // Ask anything. Optionally attaches a fresh screen grab so the answer can
+  // account for whatever is on screen (a shared doc, an IDE, a spreadsheet).
+  ipcMain.handle(
+    "assistant:ask",
+    async (_event, data: { question: string; includeScreen?: boolean }) => {
+      try {
+        const assistant = deps.getAssistantHelper();
+        if (!assistant) return { success: false, error: "Assistant not ready" };
+        if (!data?.question?.trim()) {
+          return { success: false, error: "Empty question" };
+        }
+
+        const screenshotBase64 = data.includeScreen
+          ? (await deps.captureScreenBase64()) || undefined
+          : undefined;
+
+        return await assistant.ask(data.question.trim(), { screenshotBase64 });
+      } catch (error) {
+        console.error("Error handling assistant:ask:", error);
+        return { success: false, error: "Failed to ask the assistant" };
+      }
+    }
+  )
+
+  // Answer whatever the other person just said, with no typing at all.
+  ipcMain.handle(
+    "assistant:answer-latest",
+    async (_event, data?: { includeScreen?: boolean }) => {
+      try {
+        const assistant = deps.getAssistantHelper();
+        if (!assistant) return { success: false, error: "Assistant not ready" };
+
+        const screenshotBase64 = data?.includeScreen
+          ? (await deps.captureScreenBase64()) || undefined
+          : undefined;
+
+        return await assistant.answerLatest(screenshotBase64);
+      } catch (error) {
+        console.error("Error handling assistant:answer-latest:", error);
+        return { success: false, error: "Failed to generate an answer" };
+      }
+    }
+  )
+
+  ipcMain.handle("recenter-window", () => {
+    deps.recenterWindow()
+    return { success: true }
+  })
+
+  // The overlay is shown with showInactive() so it never steals focus. Typing
+  // into the ask box therefore has to request focus explicitly, and give it
+  // back afterwards.
+  ipcMain.handle("focus-window", () => {
+    deps.focusWindow()
+    return { success: true }
+  })
+
+  ipcMain.handle("blur-window", () => {
+    deps.blurWindow()
+    return { success: true }
+  })
+
+  // Copy via the main process. In production the renderer is loaded from
+  // file://, which is not a secure context, so navigator.clipboard is
+  // undefined there and every copy silently threw.
+  ipcMain.handle("write-clipboard", (_event, text: string) => {
+    try {
+      clipboard.writeText(typeof text === "string" ? text : "")
+      return { success: true }
+    } catch (error) {
+      console.error("Failed to write to clipboard:", error)
+      return { success: false, error: "Could not copy to clipboard" }
+    }
+  })
+
+  // Overlay click-through so the window never intercepts a click during a call
+  ipcMain.handle("set-click-through", (_event, enabled: boolean) => {
+    return { success: true, enabled: deps.setClickThrough(Boolean(enabled)) }
+  })
+
+  ipcMain.handle("toggle-click-through", () => {
+    return { success: true, enabled: deps.toggleClickThrough() }
   })
 
   // Window dimension handlers

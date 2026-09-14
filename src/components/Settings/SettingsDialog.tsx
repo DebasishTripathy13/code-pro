@@ -11,6 +11,7 @@ import {
 import { Input } from "../ui/input";
 import { Button } from "../ui/button";
 import { Settings } from "lucide-react";
+import { suspendAutoResize, resumeAutoResize } from "../../lib/autoResize";
 import { useToast } from "../../contexts/toast";
 
 type APIProvider = "openai" | "gemini" | "anthropic";
@@ -50,14 +51,29 @@ const modelCategories: ModelCategory[] = [
     ],
     geminiModels: [
       {
-        id: "gemini-1.5-pro",
-        name: "Gemini 1.5 Pro",
-        description: "Best overall performance for problem extraction"
+        id: "gemini-3.1-flash-lite",
+        name: "Gemini 3.1 Flash Lite",
+        description: "Fastest measured (~0.8s) - best for live answers mid-conversation"
       },
       {
-        id: "gemini-2.0-flash",
-        name: "Gemini 2.0 Flash",
-        description: "Faster, more cost-effective option"
+        id: "gemini-3.5-flash-lite",
+        name: "Gemini 3.5 Flash Lite",
+        description: "Very fast (~1.2s), a little more capable than 3.1 Lite"
+      },
+      {
+        id: "gemini-3.7-flash",
+        name: "Gemini 3.7 Flash",
+        description: "Strong quality at ~2.6s - best all-round for solving (recommended)"
+      },
+      {
+        id: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        description: "Most capable Flash model, ~3.1s"
+      },
+      {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro (preview)",
+        description: "Deepest reasoning for hard problems, but slow (~7.9s)"
       }
     ],
     anthropicModels: [
@@ -96,14 +112,29 @@ const modelCategories: ModelCategory[] = [
     ],
     geminiModels: [
       {
-        id: "gemini-1.5-pro",
-        name: "Gemini 1.5 Pro",
-        description: "Strong overall performance for coding tasks"
+        id: "gemini-3.1-flash-lite",
+        name: "Gemini 3.1 Flash Lite",
+        description: "Fastest measured (~0.8s) - best for live answers mid-conversation"
       },
       {
-        id: "gemini-2.0-flash",
-        name: "Gemini 2.0 Flash",
-        description: "Faster, more cost-effective option"
+        id: "gemini-3.5-flash-lite",
+        name: "Gemini 3.5 Flash Lite",
+        description: "Very fast (~1.2s), a little more capable than 3.1 Lite"
+      },
+      {
+        id: "gemini-3.7-flash",
+        name: "Gemini 3.7 Flash",
+        description: "Strong quality at ~2.6s - best all-round for solving (recommended)"
+      },
+      {
+        id: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        description: "Most capable Flash model, ~3.1s"
+      },
+      {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro (preview)",
+        description: "Deepest reasoning for hard problems, but slow (~7.9s)"
       }
     ],
     anthropicModels: [
@@ -142,14 +173,29 @@ const modelCategories: ModelCategory[] = [
     ],
     geminiModels: [
       {
-        id: "gemini-1.5-pro",
-        name: "Gemini 1.5 Pro",
-        description: "Best for analyzing code and error messages"
+        id: "gemini-3.1-flash-lite",
+        name: "Gemini 3.1 Flash Lite",
+        description: "Fastest measured (~0.8s) - best for live answers mid-conversation"
       },
       {
-        id: "gemini-2.0-flash",
-        name: "Gemini 2.0 Flash",
-        description: "Faster, more cost-effective option"
+        id: "gemini-3.5-flash-lite",
+        name: "Gemini 3.5 Flash Lite",
+        description: "Very fast (~1.2s), a little more capable than 3.1 Lite"
+      },
+      {
+        id: "gemini-3.7-flash",
+        name: "Gemini 3.7 Flash",
+        description: "Strong quality at ~2.6s - best all-round for solving (recommended)"
+      },
+      {
+        id: "gemini-3.8-flash",
+        name: "Gemini 3.8 Flash",
+        description: "Most capable Flash model, ~3.1s"
+      },
+      {
+        id: "gemini-3.1-pro-preview",
+        name: "Gemini 3.1 Pro (preview)",
+        description: "Deepest reasoning for hard problems, but slow (~7.9s)"
       }
     ],
     anthropicModels: [
@@ -204,6 +250,22 @@ export function SettingsDialog({ open: externalOpen, onOpenChange }: SettingsDia
   };
   
   // Load current config on dialog open
+  // The overlay is shown with showInactive() so it never steals focus during
+  // a call. That also means the API key field cannot be typed into until the
+  // window is actually focused by the OS - opening settings is an explicit
+  // user action, so take focus here and hand it back on close.
+  useEffect(() => {
+    if (open) {
+      void window.electronAPI.focusWindow?.()
+      // Stop the window resizing itself while the dialog is up - see
+      // lib/autoResize. Without this it oscillated ~750px to ~850px wide.
+      suspendAutoResize()
+      return () => resumeAutoResize()
+    }
+    void window.electronAPI.blurWindow?.()
+    return undefined
+  }, [open]);
+
   useEffect(() => {
     if (open) {
       setIsLoading(true);
@@ -244,9 +306,9 @@ export function SettingsDialog({ open: externalOpen, onOpenChange }: SettingsDia
       setSolutionModel("gpt-4o");
       setDebuggingModel("gpt-4o");
     } else if (provider === "gemini") {
-      setExtractionModel("gemini-1.5-pro");
-      setSolutionModel("gemini-1.5-pro");
-      setDebuggingModel("gemini-1.5-pro");
+      setExtractionModel("gemini-3.7-flash");
+      setSolutionModel("gemini-3.7-flash");
+      setDebuggingModel("gemini-3.7-flash");
     } else if (provider === "anthropic") {
       setExtractionModel("claude-3-7-sonnet-20250219");
       setSolutionModel("claude-3-7-sonnet-20250219");

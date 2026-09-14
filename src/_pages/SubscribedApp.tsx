@@ -4,6 +4,8 @@ import { useEffect, useRef, useState } from "react"
 import Queue from "../_pages/Queue"
 import Solutions from "../_pages/Solutions"
 import { useToast } from "../contexts/toast"
+import AssistantPanel from "../components/Assistant/AssistantPanel"
+import { isAutoResizeSuspended } from "../lib/autoResize"
 
 interface SubscribedAppProps {
   credits: number
@@ -20,6 +22,27 @@ const SubscribedApp: React.FC<SubscribedAppProps> = ({
   const [view, setView] = useState<"queue" | "solutions" | "debug">("queue")
   const containerRef = useRef<HTMLDivElement>(null)
   const { showToast } = useToast()
+  const [canTranscribe, setCanTranscribe] = useState(false)
+
+  // Speech-to-text needs a provider that can transcribe audio. OpenAI
+  // (Whisper) and Gemini both can; Anthropic has no audio endpoint, so on
+  // that provider the overlay stays screenshot-only rather than opening a
+  // mic it can't use.
+  useEffect(() => {
+    let cancelled = false
+    window.electronAPI
+      .getConfig()
+      .then((config: any) => {
+        const provider = config?.apiProvider
+        if (!cancelled) setCanTranscribe(provider === "openai" || provider === "gemini")
+      })
+      .catch(() => {
+        if (!cancelled) setCanTranscribe(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Let's ensure we reset queries etc. if some electron signals happen
   useEffect(() => {
@@ -48,16 +71,44 @@ const SubscribedApp: React.FC<SubscribedAppProps> = ({
   useEffect(() => {
     if (!containerRef.current) return
 
-    const updateDimensions = () => {
+    // Remember what we last asked for. Resizing the window changes the layout,
+    // which re-triggers the observers, which asks for another resize - opening
+    // a modal (scroll-lock padding) starts that loop and the window visibly
+    // shakes. Only forward a genuine change.
+    let lastWidth = 0
+    let lastHeight = 0
+    let frame = 0
+
+    const measureAndSend = () => {
       if (!containerRef.current) return
+      // A modal is a fixed overlay that should not drive window size.
+      if (isAutoResizeSuspended()) return
+
       const height = containerRef.current.scrollHeight || 600
       const width = containerRef.current.scrollWidth || 800
+
+      if (Math.abs(width - lastWidth) < 4 && Math.abs(height - lastHeight) < 4) {
+        return
+      }
+      lastWidth = width
+      lastHeight = height
       window.electronAPI?.updateContentDimensions({ width, height })
+    }
+
+    // Coalesce bursts of mutations into one measurement per frame. Radix
+    // animates by rewriting attributes, so the raw callback fires dozens of
+    // times for a single dialog opening.
+    const updateDimensions = () => {
+      if (frame) return
+      frame = requestAnimationFrame(() => {
+        frame = 0
+        measureAndSend()
+      })
     }
 
     // Force initial dimension update immediately
     updateDimensions()
-    
+
     // Set a fallback timer to ensure dimensions are set even if content isn't fully loaded
     const fallbackTimer = setTimeout(() => {
       window.electronAPI?.updateContentDimensions({ width: 800, height: 600 })
@@ -66,12 +117,14 @@ const SubscribedApp: React.FC<SubscribedAppProps> = ({
     const resizeObserver = new ResizeObserver(updateDimensions)
     resizeObserver.observe(containerRef.current)
 
-    // Also watch DOM changes
+    // Watch structure and text, but NOT attributes: animation libraries rewrite
+    // style/data-state attributes continuously, which turned this into a
+    // permanent resize loop.
     const mutationObserver = new MutationObserver(updateDimensions)
     mutationObserver.observe(containerRef.current, {
       childList: true,
       subtree: true,
-      attributes: true,
+      attributes: false,
       characterData: true
     })
 
@@ -81,6 +134,7 @@ const SubscribedApp: React.FC<SubscribedAppProps> = ({
     return () => {
       resizeObserver.disconnect()
       mutationObserver.disconnect()
+      if (frame) cancelAnimationFrame(frame)
       clearTimeout(fallbackTimer)
       clearTimeout(delayedUpdate)
     }
@@ -136,6 +190,11 @@ const SubscribedApp: React.FC<SubscribedAppProps> = ({
 
   return (
     <div ref={containerRef} className="min-h-0">
+      {/* Live assistant - always mounted so listening survives view changes */}
+      <div className="px-4 pt-3">
+        <AssistantPanel autoStart={canTranscribe} />
+      </div>
+
       {view === "queue" ? (
         <Queue
           setView={setView}

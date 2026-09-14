@@ -11,6 +11,8 @@ import SolutionCommands from "../components/Solutions/SolutionCommands"
 import Debug from "./Debug"
 import { useToast } from "../contexts/toast"
 import { COMMAND_KEY } from "../utils/platform"
+import { useSpeechOutput } from "../hooks/useSpeechOutput"
+import { copyText } from "../lib/clipboard"
 
 export const ContentSection = ({
   title,
@@ -51,12 +53,12 @@ const SolutionSection = ({
 }) => {
   const [copied, setCopied] = useState(false)
 
-  const copyToClipboard = () => {
-    if (typeof content === "string") {
-      navigator.clipboard.writeText(content).then(() => {
-        setCopied(true)
-        setTimeout(() => setCopied(false), 2000)
-      })
+  const copyToClipboard = async () => {
+    if (typeof content !== "string") return
+    const ok = await copyText(content)
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
 
@@ -119,14 +121,10 @@ export const ComplexitySection = ({
       return "Complexity not available";
     }
 
-    const bigORegex = /O\([^)]+\)/i;
-    // Return the complexity as is if it already has Big O notation
-    if (bigORegex.test(complexity)) {
-      return complexity;
-    }
-    
-    // Concat Big O notation to the complexity
-    return `O(${complexity})`;
+    // Show whatever the model actually said. Wrapping arbitrary prose in
+    // "O(...)" produced nonsense like "O(Not reported by the model.)" and,
+    // worse, made a guess look like a stated complexity.
+    return complexity;
   };
   
   const formattedTimeComplexity = formatComplexity(timeComplexity);
@@ -165,6 +163,16 @@ export const ComplexitySection = ({
   );
 }
 
+/** Everything the solution pipeline returns for one problem. */
+interface SolutionPayload {
+  code: string
+  thoughts: string[]
+  walkthrough?: string[]
+  edge_cases?: string[]
+  time_complexity: string
+  space_complexity: string
+}
+
 export interface SolutionsProps {
   setView: (view: "queue" | "solutions" | "debug") => void
   credits: number
@@ -179,12 +187,17 @@ const Solutions: React.FC<SolutionsProps> = ({
 }) => {
   const queryClient = useQueryClient()
   const contentRef = useRef<HTMLDivElement>(null)
+  const { isSpeaking, toggle: toggleReadAloud, isSupported: isSpeechSupported } =
+    useSpeechOutput()
 
   const [debugProcessing, setDebugProcessing] = useState(false)
   const [problemStatementData, setProblemStatementData] =
     useState<ProblemStatementData | null>(null)
   const [solutionData, setSolutionData] = useState<string | null>(null)
   const [thoughtsData, setThoughtsData] = useState<string[] | null>(null)
+  const [edgeCasesData, setEdgeCasesData] = useState<string[] | null>(null)
+  const [walkthroughData, setWalkthroughData] = useState<string[] | null>(null)
+  const [showWalkthrough, setShowWalkthrough] = useState(false)
   const [timeComplexityData, setTimeComplexityData] = useState<string | null>(
     null
   )
@@ -194,6 +207,36 @@ const Solutions: React.FC<SolutionsProps> = ({
 
   const [isTooltipVisible, setIsTooltipVisible] = useState(false)
   const [tooltipHeight, setTooltipHeight] = useState(0)
+
+  // Live feedback while the model works, so a ~14s generation doesn't look
+  // like a hang. Both were previously invisible: the main process already
+  // emitted processing-status, but nothing in the UI listened for it.
+  const [statusMessage, setStatusMessage] = useState<string>("")
+  const [streamedSolution, setStreamedSolution] = useState<string>("")
+
+  useEffect(() => {
+    const cleanups = [
+      window.electronAPI.onProcessingStatus(({ message }) => {
+        setStatusMessage(message)
+      }),
+      window.electronAPI.onSolutionChunk((delta) => {
+        setStreamedSolution((prev) => prev + delta)
+      }),
+      window.electronAPI.onSolutionStart(() => {
+        setStreamedSolution("")
+        setStatusMessage("")
+      })
+    ]
+    return () => cleanups.forEach((fn) => fn())
+  }, [])
+
+  // Clear the streaming buffer once the parsed solution takes over.
+  useEffect(() => {
+    if (solutionData) {
+      setStreamedSolution("")
+      setStatusMessage("")
+    }
+  }, [solutionData])
 
   const [isResetting, setIsResetting] = useState(false)
 
@@ -297,6 +340,8 @@ const Solutions: React.FC<SolutionsProps> = ({
         // Every time processing starts, reset relevant states
         setSolutionData(null)
         setThoughtsData(null)
+        setEdgeCasesData(null)
+        setWalkthroughData(null)
         setTimeComplexityData(null)
         setSpaceComplexityData(null)
       }),
@@ -307,17 +352,14 @@ const Solutions: React.FC<SolutionsProps> = ({
       window.electronAPI.onSolutionError((error: string) => {
         showToast("Processing Failed", error, "error")
         // Reset solutions in the cache (even though this shouldn't ever happen) and complexities to previous states
-        const solution = queryClient.getQueryData(["solution"]) as {
-          code: string
-          thoughts: string[]
-          time_complexity: string
-          space_complexity: string
-        } | null
+        const solution = queryClient.getQueryData(["solution"]) as SolutionPayload | null
         if (!solution) {
           setView("queue")
         }
         setSolutionData(solution?.code || null)
         setThoughtsData(solution?.thoughts || null)
+        setEdgeCasesData(solution?.edge_cases || null)
+        setWalkthroughData(solution?.walkthrough || null)
         setTimeComplexityData(solution?.time_complexity || null)
         setSpaceComplexityData(solution?.space_complexity || null)
         console.error("Processing error:", error)
@@ -329,9 +371,15 @@ const Solutions: React.FC<SolutionsProps> = ({
           return
         }
         console.log({ data })
+        // Spread rather than listing fields: this used to rebuild the object
+        // with four hardcoded keys, so every new field (walkthrough, edge
+        // cases) was silently dropped here even though the model returned it.
         const solutionData = {
+          ...data,
           code: data.code,
           thoughts: data.thoughts,
+          walkthrough: data.walkthrough,
+          edge_cases: data.edge_cases,
           time_complexity: data.time_complexity,
           space_complexity: data.space_complexity
         }
@@ -339,6 +387,8 @@ const Solutions: React.FC<SolutionsProps> = ({
         queryClient.setQueryData(["solution"], solutionData)
         setSolutionData(solutionData.code || null)
         setThoughtsData(solutionData.thoughts || null)
+        setEdgeCasesData(solutionData.edge_cases || null)
+        setWalkthroughData(solutionData.walkthrough || null)
         setTimeComplexityData(solutionData.time_complexity || null)
         setSpaceComplexityData(solutionData.space_complexity || null)
 
@@ -412,15 +462,12 @@ const Solutions: React.FC<SolutionsProps> = ({
         )
       }
       if (event?.query.queryKey[0] === "solution") {
-        const solution = queryClient.getQueryData(["solution"]) as {
-          code: string
-          thoughts: string[]
-          time_complexity: string
-          space_complexity: string
-        } | null
+        const solution = queryClient.getQueryData(["solution"]) as SolutionPayload | null
 
         setSolutionData(solution?.code ?? null)
         setThoughtsData(solution?.thoughts ?? null)
+        setEdgeCasesData(solution?.edge_cases ?? null)
+        setWalkthroughData(solution?.walkthrough ?? null)
         setTimeComplexityData(solution?.time_complexity ?? null)
         setSpaceComplexityData(solution?.space_complexity ?? null)
       }
@@ -512,10 +559,19 @@ const Solutions: React.FC<SolutionsProps> = ({
                       isLoading={!problemStatementData}
                     />
                     {problemStatementData && (
-                      <div className="mt-4 flex">
+                      <div className="mt-4 space-y-2">
                         <p className="text-xs bg-gradient-to-r from-gray-300 via-gray-100 to-gray-300 bg-clip-text text-transparent animate-pulse">
-                          Generating solutions...
+                          {statusMessage || "Generating solution..."}
                         </p>
+
+                        {/* The answer as it streams in. Generation takes ~9s;
+                            showing the text arrive is what tells the user the
+                            app is working rather than stuck. */}
+                        {streamedSolution && (
+                          <pre className="max-h-64 overflow-y-auto whitespace-pre-wrap break-words rounded bg-black/40 p-3 text-[11px] leading-[1.5] text-gray-300 font-mono">
+                            {streamedSolution}
+                          </pre>
+                        )}
                       </div>
                     )}
                   </>
@@ -523,6 +579,27 @@ const Solutions: React.FC<SolutionsProps> = ({
 
                 {solutionData && (
                   <>
+                    {isSpeechSupported && (
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => {
+                            const spoken = [
+                              "Here's my approach.",
+                              ...(thoughtsData || [])
+                            ].join(". ")
+                            toggleReadAloud(spoken)
+                          }}
+                          className="flex items-center gap-1.5 text-[11px] text-white/70 hover:text-white/90 bg-white/10 hover:bg-white/20 rounded px-2 py-1 transition-colors"
+                        >
+                          <div
+                            className={`w-1.5 h-1.5 rounded-full ${
+                              isSpeaking ? "bg-red-500 animate-pulse" : "bg-white/50"
+                            }`}
+                          />
+                          {isSpeaking ? "Stop reading" : "Read thoughts aloud"}
+                        </button>
+                      </div>
+                    )}
                     <ContentSection
                       title={`My Thoughts (${COMMAND_KEY} + Arrow keys to scroll)`}
                       content={
@@ -544,6 +621,70 @@ const Solutions: React.FC<SolutionsProps> = ({
                       }
                       isLoading={!thoughtsData}
                     />
+
+                    {/* The full traced explanation. Collapsed by default -
+                        it's long by design, and the panel is glanced at
+                        mid-interview. */}
+                    {walkthroughData && walkthroughData.length > 0 && (
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => setShowWalkthrough((v) => !v)}
+                          className="flex items-center gap-1.5 text-[13px] font-medium text-white tracking-wide hover:text-white/80 transition-colors"
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            className={`w-3 h-3 text-white/50 transition-transform ${
+                              showWalkthrough ? "rotate-90" : ""
+                            }`}
+                          >
+                            <path d="M9 18l6-6-6-6" />
+                          </svg>
+                          Walkthrough
+                          <span className="text-[11px] font-normal text-white/40">
+                            ({walkthroughData.length} steps)
+                          </span>
+                        </button>
+
+                        {showWalkthrough && (
+                          <div className="space-y-1.5 pl-1">
+                            {walkthroughData.map((step, index) => (
+                              <div key={index} className="flex items-start gap-2">
+                                <span className="text-[10px] text-white/30 mt-[3px] shrink-0 w-4 text-right">
+                                  {index + 1}
+                                </span>
+                                <div className="text-[13px] leading-[1.45] text-gray-100">
+                                  {step}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {edgeCasesData && edgeCasesData.length > 0 && (
+                      <div className="space-y-2">
+                        <h2 className="text-[13px] font-medium text-white tracking-wide">
+                          Edge Cases
+                        </h2>
+                        <div className="space-y-1">
+                          {edgeCasesData.map((edgeCase, index) => (
+                            <div key={index} className="flex items-start gap-2">
+                              <div className="w-1 h-1 rounded-full bg-amber-400/80 mt-2 shrink-0" />
+                              <div className="text-[13px] leading-[1.4] text-gray-100">
+                                {edgeCase}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
                     <SolutionSection
                       title="Solution"

@@ -1,5 +1,5 @@
 {
-  "name": "interview-coder-v1",
+  "name": "code-pro",
   "version": "1.0.19",
   "main": "./dist-electron/main.js",
   "scripts": {
@@ -15,8 +15,8 @@
     "package-win": "npm run build && electron-builder build --win"
   },
   "build": {
-    "appId": "com.chunginlee.interviewcoder",
-    "productName": "Interview Coder",
+    "appId": "com.codepro.app",
+    "productName": "Code Pro",
     "files": [
       "dist/**/*",
       "dist-electron/**/*",
@@ -57,9 +57,9 @@
       "identity": "Developer ID Application",
       "notarize": true,
       "protocols": {
-        "name": "interview-coder-protocol",
+        "name": "code-pro-protocol",
         "schemes": [
-          "interview-coder"
+          "code-pro"
         ]
       }
     },
@@ -70,9 +70,9 @@
       "icon": "assets/icons/win/icon.ico",
       "artifactName": "${productName}-Windows-${version}.${ext}",
       "protocols": {
-        "name": "interview-coder-protocol",
+        "name": "code-pro-protocol",
         "schemes": [
-          "interview-coder"
+          "code-pro"
         ]
       }
     },
@@ -83,17 +83,17 @@
       "icon": "assets/icons/png/icon-256x256.png",
       "artifactName": "${productName}-Linux-${version}.${ext}",
       "protocols": {
-        "name": "interview-coder-protocol",
+        "name": "code-pro-protocol",
         "schemes": [
-          "interview-coder"
+          "code-pro"
         ]
       }
     },
     "publish": [
       {
         "provider": "github",
-        "owner": "ibttf",
-        "repo": "interview-coder",
+        "owner": "DebasishTripathy13",
+        "repo": "code-pro",
         "private": false,
         "releaseType": "release"
       }
@@ -118,7 +118,15 @@
     "technical interview",
     "tool"
   ],
-  "author": "Interview Coder Contributors",
+  "author": "Debasish Tripathy",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/DebasishTripathy13/code-pro.git"
+  },
+  "homepage": "https://github.com/DebasishTripathy13/code-pro",
+  "bugs": {
+    "url": "https://github.com/DebasishTripathy13/code-pro/issues"
+  },
   "license": "AGPL-3.0-or-later",
   "description": "An invisible desktop application to help you pass your technical interviews.",
   "dependencies": {
@@ -150,7 +158,8 @@
     "react-syntax-highlighter": "^15.6.1",
     "screenshot-desktop": "^1.15.0",
     "tailwind-merge": "^2.5.5",
-    "uuid": "^11.0.3"
+    "uuid": "^11.0.3",
+    "ws": "^8.18.1"
   },
   "devDependencies": {
     "@electron/typescript-definitions": "^8.14.0",

@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from "react"
-import { createRoot } from "react-dom/client"
+
 
 import { useToast } from "../../contexts/toast"
-import { LanguageSelector } from "../shared/LanguageSelector"
+import { adjacentLanguage } from "../../lib/languages"
 import { COMMAND_KEY } from "../../utils/platform"
 
 interface QueueCommandsProps {
@@ -24,54 +24,15 @@ const QueueCommands: React.FC<QueueCommandsProps> = ({
   const tooltipRef = useRef<HTMLDivElement>(null)
   const { showToast } = useToast()
 
-  // Extract the repeated language selection logic into a separate function
+  // Cycle to the next/previous language. This previously rendered a hidden
+  // copy of LanguageSelector off-screen and scraped its <option> values after
+  // a 50ms timing guess; the languages now come from a shared constant.
   const extractLanguagesAndUpdate = (direction?: 'next' | 'prev') => {
-    // Create a hidden instance of LanguageSelector to extract languages
-    const hiddenRenderContainer = document.createElement('div');
-    hiddenRenderContainer.style.position = 'absolute';
-    hiddenRenderContainer.style.left = '-9999px';
-    document.body.appendChild(hiddenRenderContainer);
-    
-    // Create a root and render the LanguageSelector temporarily
-    const root = createRoot(hiddenRenderContainer);
-    root.render(
-      <LanguageSelector 
-        currentLanguage={currentLanguage} 
-        setLanguage={() => {}}
-      />
-    );
-    
-    // Use a small delay to ensure the component has rendered
-    // 50ms is generally enough for React to complete a render cycle
-    setTimeout(() => {
-      // Extract options from the rendered select element
-      const selectElement = hiddenRenderContainer.querySelector('select');
-      if (selectElement) {
-        const options = Array.from(selectElement.options);
-        const values = options.map(opt => opt.value);
-        
-        // Find current language index
-        const currentIndex = values.indexOf(currentLanguage);
-        let newIndex = currentIndex;
-        
-        if (direction === 'prev') {
-          // Go to previous language
-          newIndex = (currentIndex - 1 + values.length) % values.length;
-        } else {
-          // Default to next language
-          newIndex = (currentIndex + 1) % values.length;
-        }
-        
-        if (newIndex !== currentIndex) {
-          setLanguage(values[newIndex]);
-          window.electronAPI.updateConfig({ language: values[newIndex] });
-        }
-      }
-      
-      // Clean up
-      root.unmount();
-      document.body.removeChild(hiddenRenderContainer);
-    }, 50);
+    const next = adjacentLanguage(currentLanguage, direction === 'prev' ? 'prev' : 'next');
+    if (next === currentLanguage) return;
+
+    setLanguage(next);
+    window.electronAPI.updateConfig({ language: next });
   };
 
   useEffect(() => {
