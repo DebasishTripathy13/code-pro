@@ -55,6 +55,41 @@ Code Pro sits on top of whatever you are doing as a frameless, always-on-top win
 
 ---
 
+## How it compares
+
+There is a growing category of commercial "interview copilot" tools — **Cluely**, **Final Round AI**, **Interview Coder**, **LockedIn AI**, **Sensei AI** and others. They solve a similar problem and several do it well. The differences that actually matter are structural:
+
+| | Code Pro | Commercial copilots |
+|---|---|---|
+| **Licence** | AGPL-3.0, source in this repo | Closed source |
+| **Cost model** | Free — you pay your AI provider directly for what you use | Subscription |
+| **Where your audio goes** | Your machine → your chosen AI provider | Their servers, then a provider |
+| **Account required** | None | Sign-up, usually billing too |
+| **Provider choice** | Gemini, OpenAI or Anthropic, switchable | Whatever they picked |
+| **Auditable** | Read the prompts, change them, rebuild | Trust the description |
+| **Works offline-ish** | Only the AI calls leave your machine | Service dependency |
+| **If the company folds** | Still yours, still builds | Gone |
+
+**The honest version of that table:** the thing you get here is *control and transparency*, not superiority. Every prompt, every model choice and every piece of capture logic is in this repo and can be changed. Nothing is relayed through a server belonging to anyone else.
+
+### Where the commercial tools are genuinely better
+
+Worth saying plainly, because a comparison that only flatters itself is useless:
+
+- **Polish.** They have designers, onboarding, and years of iteration on the interaction. This is a fork of an open-source project improved in evenings.
+- **Latency.** A funded product runs paid API tiers and tuned infrastructure. On a free-tier key you will sometimes wait several seconds.
+- **Support.** There is a company to email. Here there is an issue tracker and whoever feels like answering.
+- **Coverage.** Mobile apps, cloud history, team features, résumé and job-description ingestion, curated question banks — none of that exists here.
+- **Reliability guarantees.** They test against Zoom, Meet and Teams releases continuously. This is tested against whatever the contributors happen to run.
+
+### Pick this if
+
+You want to know exactly what your machine is doing, run your own key, change the prompts to match how *you* talk, or learn from the code. Pick a commercial tool if you want something that simply works, today, with support behind it.
+
+> Features and pricing of the products named above change often. Check their sites rather than trusting a table in someone else's README — including this one.
+
+---
+
 ## Installation
 
 **Prerequisites:** Node.js 16+, npm, and an API key from one of the [providers](#providers).
