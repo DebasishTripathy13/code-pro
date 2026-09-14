@@ -331,8 +331,10 @@ async function createWindow(): Promise<void> {
     try {
       const parsedURL = new URL(url);
       const hostname = parsedURL.hostname;
-      const allowedHosts = ["google.com", "supabase.co"];
-      if (allowedHosts.includes(hostname) || hostname.endsWith(".google.com") || hostname.endsWith(".supabase.co")) {
+      // Supabase was dropped along with the auth system; only the provider
+      // consoles the app links out to remain.
+      const allowedHosts = ["google.com", "aistudio.google.com"];
+      if (allowedHosts.includes(hostname) || hostname.endsWith(".google.com")) {
         shell.openExternal(url);
         return { action: "deny" }; // Do not open this URL in a new Electron window
       }

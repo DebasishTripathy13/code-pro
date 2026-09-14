@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef } from "react"
 import { useToast } from "../../contexts/toast"
 import { Screenshot } from "../../types/screenshots"
-import { supabase } from "../../lib/supabase"
 import { LanguageSelector } from "../shared/LanguageSelector"
 import { COMMAND_KEY } from "../../utils/platform"
 
@@ -21,9 +20,10 @@ const handleSignOut = async () => {
     localStorage.clear()
     sessionStorage.clear()
 
-    // Then sign out from Supabase
-    const { error } = await supabase.auth.signOut()
-    if (error) throw error
+    // Clear the stored API key, matching the queue view's sign-out. This used
+    // to call supabase.auth.signOut(), left behind when Supabase auth was
+    // removed - there is no auth backend, so it could only ever throw.
+    await window.electronAPI.updateConfig({ apiKey: "" })
   } catch (err) {
     console.error("Error signing out:", err)
   }
