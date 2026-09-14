@@ -72,6 +72,69 @@ There is a growing category of commercial "interview copilot" tools — **Cluely
 
 **The honest version of that table:** the thing you get here is *control and transparency*, not superiority. Every prompt, every model choice and every piece of capture logic is in this repo and can be changed. Nothing is relayed through a server belonging to anyone else.
 
+### By the numbers
+
+Measured on this machine against the live API, not estimated. One "solve" = screenshot the problem, extract it, generate the full answer with walkthrough, edge cases and complexity.
+
+**Token usage per solve** — `gemini-3.7-flash`, a 1707×960 screenshot:
+
+| Step | Input tokens | Output tokens |
+|---|---|---|
+| Extraction (screenshot → structured problem) | 1,126 | 313 |
+| Solution (code, derivation, walkthrough, edge cases) | 2,216 | 1,711 |
+| **Total** | **3,342** | **2,024** |
+
+**What that costs**, at Gemini 3.x Flash introductory pricing ($0.75/1M input, $3.75/1M output):
+
+| Volume | Cost |
+|---|---|
+| 1 solve | **$0.0101** |
+| 30 solves | $0.30 |
+| 100 solves | $1.01 |
+| 1,000 solves | $10.10 |
+
+**Roughly one cent per problem.** Google's free tier also covers a daily allowance per model, so casual practice is often $0 — and when one model's daily quota runs out, the fallback chain moves to the next rather than stopping.
+
+**What the alternatives charge.** Taken from their own pricing pages, checked September 2026:
+
+| Product | Price | Notes |
+|---|---|---|
+| **Code Pro** | **~$0.01 per solve** | Your own API key; free tier covers casual use |
+| [Cluely](https://cluely.com/pricing) — Starter | Free | Limited AI responses and notetaking |
+| [Cluely](https://cluely.com/pricing) — Pro | $19.99 / month | Unlimited responses |
+| [Cluely](https://cluely.com/pricing) — Pro + Undetectability | **$149.99 / month** | Hidden from screen-sharing software |
+| [Interview Coder](https://www.interviewcoder.co) — Monthly Pro | **$299 / month** | 1,000 usage credits |
+| [Interview Coder](https://www.interviewcoder.co) — Lifetime Pro | $799 one-time | Unlimited |
+
+Two of those comparisons are worth spelling out:
+
+- **Invisibility to screen sharing is Cluely's $149.99/month tier.** In Code Pro it is the default behaviour, implemented in [`electron/main.ts`](electron/main.ts) with `setContentProtection`, and costs nothing.
+- **Interview Coder's $299/month buys 1,000 credits.** At the measured rate here, **1,000 solves costs about $10.10** in API usage. A credit is not necessarily one solve, so treat that as an order-of-magnitude comparison rather than an exact one.
+
+**How long a subscription's monthly fee lasts here:**
+
+| Their monthly price | Equivalent solves at $0.0101 | Per day, every day |
+|---|---|---|
+| $19.99 | ~1,980 | 66 |
+| $149.99 | ~14,850 | 495 |
+| $299.00 | ~29,600 | 987 |
+
+To be fair about it: if you solve five problems a month, a free tier from any of these costs you nothing and takes no setup. The economics only favour running your own key at volume — or when you want the source.
+
+**Response latency**, median time-to-first-token over 3 streaming runs each:
+
+| Model | TTFT | Full response |
+|---|---|---|
+| `gemini-3.1-flash-lite` | 0.8s | 1.5s |
+| `gemini-3.5-flash-lite` | 1.2s | 1.9s |
+| `gemini-3.7-flash` | 2.6s | 3.6s |
+| `gemini-3.8-flash` | 3.1s | 3.5s |
+| `gemini-3.1-pro-preview` | 7.9s | 8.3s |
+
+Live transcription is billed by audio duration rather than per solve, so it scales with how long you listen. That one is **not** measured here — don't take a number for it from this README.
+
+> These figures come from a free-tier key on one machine and one network. Treat them as the right order of magnitude, not a guarantee.
+
 ### Where the commercial tools are genuinely better
 
 Worth saying plainly, because a comparison that only flatters itself is useless:
