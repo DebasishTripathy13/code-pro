@@ -1,6 +1,6 @@
 <div align="center">
 
-# Code Pro
+<img src="assets/brand/logo-512.png" alt="Code Pro" width="320">
 
 **A local, invisible overlay that listens to your call, reads your screen, and drafts what to say next.**
 

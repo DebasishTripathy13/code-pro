@@ -49,7 +49,7 @@
         }
       ],
       "artifactName": "Interview-Coder-${arch}.${ext}",
-      "icon": "assets/icons/mac/icon.icns",
+      "icon": "assets/brand/icon-256.png",
       "hardenedRuntime": true,
       "gatekeeperAssess": false,
       "entitlements": "build/entitlements.mac.plist",
@@ -67,7 +67,7 @@
       "target": [
         "nsis"
       ],
-      "icon": "assets/icons/win/icon.ico",
+      "icon": "assets/brand/icon-256.png",
       "artifactName": "${productName}-Windows-${version}.${ext}",
       "protocols": {
         "name": "code-pro-protocol",
@@ -80,7 +80,7 @@
       "target": [
         "AppImage"
       ],
-      "icon": "assets/icons/png/icon-256x256.png",
+      "icon": "assets/brand/icon-256.png",
       "artifactName": "${productName}-Linux-${version}.${ext}",
       "protocols": {
         "name": "code-pro-protocol",
